@@ -2,6 +2,8 @@
 [![Docs Status](https://docs.rs/thunk/badge.svg)](https://docs.rs/thunk)
 [![On crates.io](https://img.shields.io/crates/v/thunk.svg)](https://crates.io/crates/thunk)
 
+N.B. this crate requires nightly, as it makes use of `FnBox`.
+
 # `thunk`: Generic lazy evaluation for Rust
 
 The `thunk` crate provides primitives for lazy evaluation in Rust.
