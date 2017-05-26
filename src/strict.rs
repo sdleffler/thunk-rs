@@ -59,3 +59,51 @@ impl<T> Lazy for Thunk<T> {
     #[inline]
     fn unwrap(self) -> T { self.0 }
 }
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use test::{self, Bencher};
+
+    #[test]
+    fn thunk_computed() {
+        let thunk = Thunk::computed(1 + 1);
+
+        assert_eq!(*thunk, 2);
+    }
+
+    #[test]
+    fn thunk_deferred() {
+        let thunk = Thunk::defer(|| test::black_box(1) + 1);
+
+        assert_eq!(*thunk, 2);
+    }
+
+    fn ten_thousand_xors_strict(n: usize) -> Thunk<usize> {
+        Thunk::computed((0..test::black_box(10000)).fold(test::black_box(n), |old, new| old ^ new))
+    }
+
+    fn ten_thousand_xors_lazy(n: usize) -> Thunk<usize> {
+        Thunk::defer(move || {
+                         (0..test::black_box(10000)).fold(test::black_box(n), |old, new| old ^ new)
+                     })
+    }
+
+    #[bench]
+    fn ten_thousand_xors_threadsafe_strict(b: &mut Bencher) {
+        b.iter(|| {
+                   let mut things: Vec<_> = (0..1000).map(ten_thousand_xors_strict).collect();
+                   test::black_box(things.pop())
+               })
+    }
+
+    #[bench]
+    fn ten_thousand_xors_threadsafe_lazy(b: &mut Bencher) {
+        b.iter(|| {
+            let mut things: Vec<_> = (0..1000).map(ten_thousand_xors_lazy).collect();
+            test::black_box(things.pop())
+        })
+    }
+}

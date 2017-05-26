@@ -3,5 +3,17 @@ authors = ["Sean Leffler <sean@errno.com>"]
 name = "thunk"
 version = "0.1.0"
 
+description = "Primitives for generic lazy evaluation in Rust."
+
+documentation = "https://docs.rs/thunk"
+homepage = "https://github.com/sdleffler/thunk-rs"
+repository = "https://github.com/sdleffler/thunk-rs"
+
+readme = "README.md"
+
+keywords = ["lazy", "generic", "thunk", "concurrent", "parallel"]
+
+license = "MIT/Apache-2.0"
+
 [dependencies]
 unreachable = "1.0.0"
