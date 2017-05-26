@@ -1,0 +1,7 @@
+[package]
+authors = ["Sean Leffler <sean@errno.com>"]
+name = "thunk"
+version = "0.1.0"
+
+[dependencies]
+unreachable = "1.0.0"
