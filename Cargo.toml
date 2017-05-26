@@ -1,9 +1,9 @@
 [package]
 authors = ["Sean Leffler <sean@errno.com>"]
 name = "thunk"
-version = "0.1.1"
+version = "0.1.2"
 
-description = "Primitives for generic lazy evaluation in Rust."
+description = "Primitives for generic lazy evaluation in Rust. This crate requires nightly for `untagged_unions` and `fnbox`."
 
 documentation = "https://docs.rs/thunk"
 homepage = "https://github.com/sdleffler/thunk-rs"
@@ -12,6 +12,8 @@ repository = "https://github.com/sdleffler/thunk-rs"
 readme = "README.md"
 
 keywords = ["lazy", "generic", "thunk", "concurrent", "parallel"]
+
+categories = ["data-structures", "caching"]
 
 license = "MIT/Apache-2.0"
 

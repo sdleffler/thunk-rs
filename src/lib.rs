@@ -3,9 +3,9 @@
 //! with thunks of a given type.
 //!
 //! Three different thunk types are provided, all implementing `Lazy`:
-//! * `unsync::Thunk`: a non thread-safe thunk.
-//! * `sync::Thunk`: a thread-safe thunk, which implements `Send + Sync`.
-//! * `strict::Thunk`: a strict, non-deferred thunk which always immediately
+//! * `Thunk`: a non thread-safe thunk.
+//! * `AtomicThunk`: a thread-safe thunk, which implements `Send + Sync`.
+//! * `Strict`: a strict, non-deferred thunk which always immediately
 //!   evaluates whatever computation it's given, intended for genericity over
 //!   strictness.
 

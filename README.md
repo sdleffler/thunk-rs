@@ -2,7 +2,7 @@
 [![Docs Status](https://docs.rs/thunk/badge.svg)](https://docs.rs/thunk)
 [![On crates.io](https://img.shields.io/crates/v/thunk.svg)](https://crates.io/crates/thunk)
 
-N.B. this crate requires nightly, as it makes use of `FnBox`.
+N.B. this crate requires nightly, as it makes use of `FnBox` and untagged unions.
 
 # `thunk`: Generic lazy evaluation for Rust
 
@@ -11,10 +11,10 @@ The `thunk` crate provides primitives for lazy evaluation in Rust.
 At present, it provides three thunk types and a trait which encapsulates lazily
 evaluated types, `Lazy`. The thunk types are as follows:
 
- * `unsync::Thunk`: non-`Send`, non-`Sync` thunks.
- * `sync::Thunk`: `Send + Sync` thunks which use atomic data internally. This is
-   slower than `unsync::Thunk`, but `sync::Thunk` is thread-safe.
- * `strict::Thunk`: `Send + Sync`, paradoxically strict thunks. `strict::Thunk`
+ * `Thunk`: non-`Send`, non-`Sync` thunks.
+ * `AtomicThunk`: `Send + Sync` thunks which use atomic data internally. This is
+   slower than `Thunk`, but `AtomicThunk` is thread-safe.
+ * `Strict`: `Send + Sync`, paradoxically strict thunks. `Strict`
    doesn't actually defer anything, and is provided to make it simpler to write
    code which is generic over strictness.
 
