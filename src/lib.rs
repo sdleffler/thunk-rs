@@ -25,6 +25,11 @@ pub mod sync;
 pub mod unsync;
 
 
+pub use strict::Strict;
+pub use sync::AtomicThunk;
+pub use unsync::Thunk;
+
+
 /// The `Lazy` trait abstracts lazily computed values, also known as "thunks".
 pub trait Lazy
     where Self: AsRef<<Self as Deref>::Target> + AsMut<<Self as Deref>::Target>,

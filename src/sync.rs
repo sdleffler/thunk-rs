@@ -10,11 +10,11 @@ use unreachable::{unreachable, UncheckedOptionExt};
 
 use ::Lazy;
 
-/// A thread-safe `Thunk`, representing a lazily computed value.
+/// A thread-safe `AtomicThunk`, representing a lazily computed value.
 ///
 /// TODO: Test `Option<UnsafeCell<Cache<T>>>` instead of storing thunk
 /// invalidation in the atomic `flag`.
-pub struct Thunk<T> {
+pub struct AtomicThunk<T> {
     /// The `lock` mutex is used for preventing other threads from accessing the
     /// thunk's internals when a thunk is evaluating.
     lock: Mutex<()>,
@@ -24,32 +24,32 @@ pub struct Thunk<T> {
     flag: AtomicUsize,
 
     /// The thunk and/or its computed result are stored in an `UnsafeCell` so that
-    /// the fact that a `Thunk` is either computed *or* non-computed can be made
+    /// the fact that a `AtomicThunk` is either computed *or* non-computed can be made
     /// opaque to the user. This way, an immutable reference can have its thunk
     /// forced.
     data: UnsafeCell<Cache<T>>,
 }
 
 
-unsafe impl<T: Send> Send for Thunk<T> {}
-unsafe impl<T: Sync> Sync for Thunk<T> {}
+unsafe impl<T: Send> Send for AtomicThunk<T> {}
+unsafe impl<T: Sync> Sync for AtomicThunk<T> {}
 
 
-/// The `Thunk` is not yet evaluated. We can try to lock it and evaluate.
+/// The `AtomicThunk` is not yet evaluated. We can try to lock it and evaluate.
 const THUNK_DEFERRED: usize = 0;
 
-/// The `Thunk` is evaluated, and can be safely accessed.
+/// The `AtomicThunk` is evaluated, and can be safely accessed.
 const THUNK_EVALUATED: usize = 1;
 
-/// The `Thunk` is currently *locking* - the `Mutex` is not yet locked but will
+/// The `AtomicThunk` is currently *locking* - the `Mutex` is not yet locked but will
 /// be very soon.
 const THUNK_LOCKING: usize = 2;
 
-/// The thread which is going to evaluate the `Thunk` has a lock on the `Mutex`.
+/// The thread which is going to evaluate the `AtomicThunk` has a lock on the `Mutex`.
 /// When the `Mutex` becomes unlocked, the computed result may be accessed.
 const THUNK_LOCKED: usize = 3;
 
-/// There is no data in the `Thunk` - it has been removed and dealt with. Thus,
+/// There is no data in the `AtomicThunk` - it has been removed and dealt with. Thus,
 /// the thunk is invalidated and should only be dropped. Any function which can
 /// put the thunk in this state is already marked unsafe.
 const THUNK_INVALIDATED: usize = 4;
@@ -69,7 +69,7 @@ union Cache<T> {
 }
 
 
-impl<T> Drop for Thunk<T> {
+impl<T> Drop for AtomicThunk<T> {
     fn drop(&mut self) {
         match unsafe { ptr::read(&self.flag) }.into_inner() {
             THUNK_DEFERRED => mem::drop(unsafe { self.take_data().deferred }),
@@ -95,7 +95,7 @@ impl<T> Cache<T> {
 }
 
 
-impl<T> AsRef<T> for Thunk<T> {
+impl<T> AsRef<T> for AtomicThunk<T> {
     #[inline]
     fn as_ref(&self) -> &T {
         self
@@ -103,7 +103,7 @@ impl<T> AsRef<T> for Thunk<T> {
 }
 
 
-impl<T> AsMut<T> for Thunk<T> {
+impl<T> AsMut<T> for AtomicThunk<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         self
@@ -111,7 +111,7 @@ impl<T> AsMut<T> for Thunk<T> {
 }
 
 
-impl<T> Deref for Thunk<T> {
+impl<T> Deref for AtomicThunk<T> {
     type Target = T;
 
     #[inline]
@@ -129,7 +129,7 @@ impl<T> Deref for Thunk<T> {
 }
 
 
-impl<T> DerefMut for Thunk<T> {
+impl<T> DerefMut for AtomicThunk<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         self.force();
@@ -145,10 +145,10 @@ impl<T> DerefMut for Thunk<T> {
 }
 
 
-impl<T> From<T> for Thunk<T> {
+impl<T> From<T> for AtomicThunk<T> {
     #[inline]
-    fn from(t: T) -> Thunk<T> {
-        Thunk {
+    fn from(t: T) -> AtomicThunk<T> {
+        AtomicThunk {
             lock: Mutex::new(()),
             flag: AtomicUsize::new(THUNK_EVALUATED),
             data: UnsafeCell::new(Cache { evaluated: t }),
@@ -157,7 +157,7 @@ impl<T> From<T> for Thunk<T> {
 }
 
 
-impl<T> Thunk<T> {
+impl<T> AtomicThunk<T> {
     #[inline]
     fn take_data(&mut self) -> Cache<T> {
         self.flag.store(THUNK_INVALIDATED, Ordering::Relaxed);
@@ -167,17 +167,17 @@ impl<T> Thunk<T> {
 
     /// PRECONDITIONS: flag must not be THUNK_DEFERRED or THUNK_INVALIDATED.
     ///
-    /// `.besiege()` expects an evaluated or locked `Thunk`.
-    /// - If the `Thunk` is locking, it will spin until the `Thunk` is locked and
+    /// `.besiege()` expects an evaluated or locked `AtomicThunk`.
+    /// - If the `AtomicThunk` is locking, it will spin until the `AtomicThunk` is locked and
     ///   then wait to acquire and summarily release the mutex.
-    /// - If the `Thunk` is locked, it will wait for a lock on the mutex before
+    /// - If the `AtomicThunk` is locked, it will wait for a lock on the mutex before
     ///   immediately releasing it and returning.
-    /// - If the `Thunk` is evaluated, it will immediately return.
+    /// - If the `AtomicThunk` is evaluated, it will immediately return.
     #[inline]
     unsafe fn besiege(&self) {
         loop {
             match self.flag.load(Ordering::Acquire) {
-                // If the Thunk has been evaluated, unwrap it and return it.
+                // If the AtomicThunk has been evaluated, unwrap it and return it.
                 THUNK_EVALUATED => return,
 
                 // If we're waiting for the lock to become available, then spin.
@@ -197,10 +197,10 @@ impl<T> Thunk<T> {
 }
 
 
-impl<T> Lazy for Thunk<T> {
+impl<T> Lazy for AtomicThunk<T> {
     #[inline]
-    fn defer<F: FnBox() -> T + 'static>(f: F) -> Thunk<T> {
-        Thunk {
+    fn defer<F: FnBox() -> T + 'static>(f: F) -> AtomicThunk<T> {
+        AtomicThunk {
             lock: Mutex::new(()),
             flag: AtomicUsize::new(THUNK_DEFERRED),
             data: UnsafeCell::new(Cache { deferred: Box::new(f) }),
@@ -212,7 +212,7 @@ impl<T> Lazy for Thunk<T> {
     fn force(&self) {
         match self.flag
                   .compare_and_swap(THUNK_DEFERRED, THUNK_LOCKING, Ordering::Acquire) {
-            // If we've successfully taken control of the Thunk:
+            // If we've successfully taken control of the AtomicThunk:
             THUNK_DEFERRED => {
                 // Lock the mutex, and then set the flag to THUNK_LOCKED so that
                 // other threads know that they can stop spinning and instead
@@ -235,10 +235,10 @@ impl<T> Lazy for Thunk<T> {
                 }
             }
 
-            /// If the `Thunk` is evaluated, do nothing.
+            /// If the `AtomicThunk` is evaluated, do nothing.
             THUNK_EVALUATED => {}
 
-            /// If the `Thunk` is `LOCKING` or `LOCKED`, wait until the thunk is
+            /// If the `AtomicThunk` is `LOCKING` or `LOCKED`, wait until the thunk is
             /// done evaluating and then return a reference to the inner value.
             THUNK_LOCKING | THUNK_LOCKED => unsafe { self.besiege() },
 
@@ -266,24 +266,24 @@ mod test {
 
     #[test]
     fn thunk_computed() {
-        let thunk = Thunk::computed(1 + 1);
+        let thunk = AtomicThunk::computed(1 + 1);
 
         assert_eq!(*thunk, 2);
     }
 
     #[test]
     fn thunk_deferred() {
-        let thunk = Thunk::defer(|| test::black_box(1) + 1);
+        let thunk = AtomicThunk::defer(|| test::black_box(1) + 1);
 
         assert_eq!(*thunk, 2);
     }
 
-    fn ten_thousand_xors_strict(n: usize) -> Thunk<usize> {
-        Thunk::computed((0..test::black_box(10000)).fold(test::black_box(n), |old, new| old ^ new))
+    fn ten_thousand_xors_strict(n: usize) -> AtomicThunk<usize> {
+        AtomicThunk::computed((0..test::black_box(10000)).fold(test::black_box(n), |old, new| old ^ new))
     }
 
-    fn ten_thousand_xors_lazy(n: usize) -> Thunk<usize> {
-        Thunk::defer(move || {
+    fn ten_thousand_xors_lazy(n: usize) -> AtomicThunk<usize> {
+        AtomicThunk::defer(move || {
                          (0..test::black_box(10000)).fold(test::black_box(n), |old, new| old ^ new)
                      })
     }
