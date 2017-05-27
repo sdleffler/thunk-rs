@@ -2,12 +2,19 @@
 //! evaluation in Rust. It also provides functionality for generically working
 //! with thunks of a given type.
 //!
-//! Three different thunk types are provided, all implementing `Lazy`:
+//! Three different owned thunk types are provided, implementing `Lazy`,
+//! `LazyRef`, and `LazyMut`:
 //! * `Thunk`: a non thread-safe thunk.
 //! * `AtomicThunk`: a thread-safe thunk, which implements `Send + Sync`.
 //! * `Strict`: a strict, non-deferred thunk which always immediately
 //!   evaluates whatever computation it's given, intended for genericity over
 //!   strictness.
+//!
+//! In addition, two shared thunk types are provided, implementing `LazyRef`
+//! and `LazyShared`:
+//! * `RcThunk`: a reference-counted thunk type. This is a wrapper over `Thunk`.
+//! * `ArcThunk`: an atomically reference-counted thunk type. This is a wrapper
+//!   over `AtomicThunk`.
 
 #![feature(fnbox)]
 #![feature(untagged_unions)]
@@ -26,15 +33,14 @@ pub mod unsync;
 
 
 pub use strict::Strict;
-pub use sync::AtomicThunk;
-pub use unsync::Thunk;
+pub use sync::{AtomicThunk, ArcThunk};
+pub use unsync::{Thunk, RcThunk};
 
 
-/// The `Lazy` trait abstracts lazily computed values, also known as "thunks".
-pub trait Lazy
-    where Self: AsRef<<Self as Deref>::Target> + AsMut<<Self as Deref>::Target>,
-          Self: Deref + DerefMut + From<<Self as Deref>::Target>,
-          Self::Target: Sized
+/// The `LazyRef` trait abstracts immutable references to lazily computed values.
+pub trait LazyRef<'a>
+    : Deref + AsRef<<Self as Deref>::Target> + From<<Self as Deref>::Target> + 'a
+    where Self::Target: Sized
 {
     /// Construct a thunk with a precomputed value. This means
     /// unwrapping/dereferencing is effectively a no-op.
@@ -45,11 +51,24 @@ pub trait Lazy
 
     /// Defer a computation stored as a `FnOnce` closure. Unwrapping/dereferencing
     /// will force the computation of the closure.
-    fn defer<F: FnOnce() -> Self::Target + 'static>(F) -> Self;
+    fn defer<F: FnOnce() -> Self::Target + 'a>(F) -> Self;
 
     /// Manually force a thunk's computation.
     fn force(&self);
+}
 
+
+/// The `LazyMut` trait abstracts mutable references to lazily computed values.
+pub trait LazyMut<'a>: LazyRef<'a> + DerefMut + AsMut<<Self as Deref>::Target>
+    where Self::Target: Sized
+{
+}
+
+
+/// The `Lazy` trait abstracts owned, lazily computed values.
+pub trait Lazy<'a>: LazyRef<'a> + LazyMut<'a>
+    where Self::Target: Sized
+{
     /// Unwrap a thunk into its inner value. This forces the thunk.
     fn unwrap(self) -> Self::Target;
 }

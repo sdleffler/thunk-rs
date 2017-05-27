@@ -1,10 +1,11 @@
 use std::ops::{Deref, DerefMut};
 
-use ::Lazy;
+use ::{LazyRef, LazyMut, Lazy};
 
 
 /// A do-nothing, strict "thunk". This is intended for implementing structures which
 /// are generic over strictness.
+#[derive(Clone, Copy)]
 pub struct Strict<T>(T);
 
 
@@ -45,17 +46,22 @@ impl<T> DerefMut for Strict<T> {
 }
 
 
-impl<T> Lazy for Strict<T> {
+impl<'a, T: 'a> LazyRef<'a> for Strict<T> {
     #[inline]
-    fn defer<F: FnOnce() -> T + 'static>(f: F) -> Strict<T> {
+    fn defer<F: FnOnce() -> T + 'a>(f: F) -> Strict<T> {
         Strict(f())
     }
 
 
     #[inline]
     fn force(&self) {}
+}
 
 
+impl<'a, T: 'a> LazyMut<'a> for Strict<T> {}
+
+
+impl<'a, T: 'a> Lazy<'a> for Strict<T> {
     #[inline]
     fn unwrap(self) -> T { self.0 }
 }
