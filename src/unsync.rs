@@ -24,7 +24,7 @@ pub struct Thunk<'a, T: 'a> {
 }
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Flag {
     Deferred,
     Evaluated,
@@ -301,5 +301,28 @@ mod test {
                    let mut things: Vec<_> = (0..1000).map(ten_thousand_xors_lazy).collect();
                    test::black_box(things.pop())
                })
+    }
+
+
+    #[test]
+    fn rc_thunk_computed() {
+        let rc_thunk0 = RcThunk::computed(1 + 1);
+        let rc_thunk1 = rc_thunk0.clone();
+
+        assert_eq!(rc_thunk0.0.flag.get(), Flag::Evaluated);
+        assert_eq!(&*rc_thunk1, &2);
+        assert_eq!(rc_thunk0.0.flag.get(), Flag::Evaluated);
+        assert_eq!(&*rc_thunk0, &2);
+    }
+
+    #[test]
+    fn rc_thunk_deferred() {
+        let rc_thunk0 = RcThunk::defer(move || test::black_box(1) + 1);
+        let rc_thunk1 = rc_thunk0.clone();
+
+        assert_eq!(rc_thunk0.0.flag.get(), Flag::Deferred);
+        assert_eq!(&*rc_thunk1, &2);
+        assert_eq!(rc_thunk0.0.flag.get(), Flag::Evaluated);
+        assert_eq!(&*rc_thunk0, &2);
     }
 }

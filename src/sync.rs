@@ -400,4 +400,27 @@ mod test {
             test::black_box(things.pop())
         })
     }
+
+
+    #[test]
+    fn arc_thunk_computed() {
+        let arc_thunk0 = ArcThunk::computed(1 + 1);
+        let arc_thunk1 = arc_thunk0.clone();
+
+        assert_eq!(arc_thunk0.0.flag.load(Ordering::Relaxed), THUNK_EVALUATED);
+        assert_eq!(&*arc_thunk1, &2);
+        assert_eq!(arc_thunk0.0.flag.load(Ordering::Relaxed), THUNK_EVALUATED);
+        assert_eq!(&*arc_thunk0, &2);
+    }
+
+    #[test]
+    fn arc_thunk_deferred() {
+        let arc_thunk0 = ArcThunk::defer(move || test::black_box(1) + 1);
+        let arc_thunk1 = arc_thunk0.clone();
+
+        assert_eq!(arc_thunk0.0.flag.load(Ordering::Relaxed), THUNK_DEFERRED);
+        assert_eq!(&*arc_thunk1, &2);
+        assert_eq!(arc_thunk0.0.flag.load(Ordering::Relaxed), THUNK_EVALUATED);
+        assert_eq!(&*arc_thunk0, &2);
+    }
 }
