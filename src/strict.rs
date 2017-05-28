@@ -46,9 +46,9 @@ impl<T> DerefMut for Strict<T> {
 }
 
 
-impl<'a, T: 'a> LazyRef<'a> for Strict<T> {
+impl<T> LazyRef for Strict<T> {
     #[inline]
-    fn defer<F: FnOnce() -> T + 'a>(f: F) -> Strict<T> {
+    fn defer<'a, F: FnOnce() -> T + 'a>(f: F) -> Strict<T> {
         Strict(f())
     }
 
@@ -58,10 +58,10 @@ impl<'a, T: 'a> LazyRef<'a> for Strict<T> {
 }
 
 
-impl<'a, T: 'a> LazyMut<'a> for Strict<T> {}
+impl<T> LazyMut for Strict<T> {}
 
 
-impl<'a, T: 'a> Lazy<'a> for Strict<T> {
+impl<T> Lazy for Strict<T> {
     #[inline]
     fn unwrap(self) -> T { self.0 }
 }

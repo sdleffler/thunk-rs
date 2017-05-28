@@ -16,9 +16,9 @@
 //! * `ArcThunk`: an atomically reference-counted thunk type. This is a wrapper
 //!   over `AtomicThunk`.
 
+#![cfg_attr(test, feature(test))]
 #![feature(fnbox)]
 #![feature(untagged_unions)]
-#![cfg_attr(test, feature(test))]
 
 extern crate unreachable;
 
@@ -37,21 +37,23 @@ pub use sync::{AtomicThunk, ArcThunk};
 pub use unsync::{Thunk, RcThunk};
 
 
-/// The `LazyRef` trait abstracts immutable references to lazily computed values.
-pub trait LazyRef<'a>
-    : Deref + AsRef<<Self as Deref>::Target> + From<<Self as Deref>::Target> + 'a
-    where Self::Target: Sized
+/// The `Lazy` trait abstracts thunks which have exactly the same lifetimes
+/// as the types they defer computation of.
+pub trait LazyRef
+    : Deref + Sized
+    where Self::Target: Into<Self> + Sized
 {
     /// Construct a thunk with a precomputed value. This means
-    /// unwrapping/dereferencing is effectively a no-op.
+    /// forcing the thunk is a no-op.
     #[inline]
     fn computed(t: Self::Target) -> Self {
         t.into()
     }
 
     /// Defer a computation stored as a `FnOnce` closure. Unwrapping/dereferencing
-    /// will force the computation of the closure.
-    fn defer<F: FnOnce() -> Self::Target + 'a>(F) -> Self;
+    /// will force the computation of the closure. The supplied closure must live
+    /// as long as the type which the thunk computes.
+    fn defer<'a, F: FnOnce() -> Self::Target + 'a>(F) -> Self where Self::Target: 'a;
 
     /// Manually force a thunk's computation.
     fn force(&self);
@@ -59,14 +61,14 @@ pub trait LazyRef<'a>
 
 
 /// The `LazyMut` trait abstracts mutable references to lazily computed values.
-pub trait LazyMut<'a>: LazyRef<'a> + DerefMut + AsMut<<Self as Deref>::Target>
+pub trait LazyMut: From<<Self as Deref>::Target> + LazyRef + DerefMut
     where Self::Target: Sized
 {
 }
 
 
 /// The `Lazy` trait abstracts owned, lazily computed values.
-pub trait Lazy<'a>: LazyRef<'a> + LazyMut<'a>
+pub trait Lazy: LazyMut
     where Self::Target: Sized
 {
     /// Unwrap a thunk into its inner value. This forces the thunk.

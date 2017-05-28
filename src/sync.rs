@@ -1,3 +1,4 @@
+use std::borrow::{Borrow, BorrowMut};
 use std::boxed::FnBox;
 use std::cell::UnsafeCell;
 use std::mem;
@@ -8,14 +9,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use unreachable::{unreachable, UncheckedOptionExt};
 
-use ::{LazyRef, LazyMut, Lazy};
+use {LazyRef, LazyMut, Lazy};
 
 
 /// A thread-safe `AtomicThunk`, representing a lazily computed value.
 ///
 /// TODO: Test `Option<UnsafeCell<Cache<T>>>` instead of storing thunk
 /// invalidation in the atomic `flag`.
-pub struct AtomicThunk<'a, T: 'a> {
+pub struct AtomicThunk<T> {
     /// The `lock` mutex is used for preventing other threads from accessing the
     /// thunk's internals when a thunk is evaluating.
     lock: Mutex<()>,
@@ -28,12 +29,12 @@ pub struct AtomicThunk<'a, T: 'a> {
     /// the fact that a `AtomicThunk` is either computed *or* non-computed can be made
     /// opaque to the user. This way, an immutable reference can have its thunk
     /// forced.
-    data: UnsafeCell<Cache<'a, T>>,
+    data: UnsafeCell<Cache<T>>,
 }
 
 
-unsafe impl<'a, T: Send + 'a> Send for AtomicThunk<'a, T> {}
-unsafe impl<'a, T: Sync + 'a> Sync for AtomicThunk<'a, T> {}
+unsafe impl<T: Send> Send for AtomicThunk<T> {}
+unsafe impl<T: Sync> Sync for AtomicThunk<T> {}
 
 
 /// The `AtomicThunk` is not yet evaluated. We can try to lock it and evaluate.
@@ -61,8 +62,8 @@ const THUNK_INVALIDATED: usize = 4;
 /// data to run the deferred computation; or, it holds the already computed
 /// result.
 #[allow(unions_with_drop_fields)]
-union Cache<'a, T: 'a> {
-    deferred: Box<FnBox() -> T + 'a>,
+union Cache<T> {
+    deferred: Box<FnBox() -> ()>,
     evaluated: T,
 
     #[allow(dead_code)]
@@ -70,20 +71,22 @@ union Cache<'a, T: 'a> {
 }
 
 
-impl<'a, T: 'a> Drop for AtomicThunk<'a, T> {
+impl<T> Drop for AtomicThunk<T> {
     fn drop(&mut self) {
         match unsafe { ptr::read(&self.flag) }.into_inner() {
             THUNK_DEFERRED => mem::drop(unsafe { self.take_data().deferred }),
             THUNK_EVALUATED => mem::drop(unsafe { self.take_data().evaluated }),
-            THUNK_INVALIDATED => {},
-            THUNK_LOCKING | THUNK_LOCKED => unreachable!("thunks should never be dropped while locking or locked!"),
+            THUNK_INVALIDATED => {}
+            THUNK_LOCKING | THUNK_LOCKED => {
+                unreachable!("thunks should never be dropped while locking or locked!")
+            }
             _ => unsafe { unreachable() },
         }
     }
 }
 
 
-impl<'a, T: 'a> Cache<'a, T> {
+impl<T> Cache<T> {
     /// PRECONDITION: `Cache` must be `Deferred`! UB results otherwise.
     ///
     /// Evaluate the thunk and replace the `Cache` with an `Evaluated` value
@@ -91,12 +94,31 @@ impl<'a, T: 'a> Cache<'a, T> {
     #[inline]
     unsafe fn evaluate_thunk(&mut self) {
         let Cache { deferred: thunk } = mem::replace(self, Cache { evaluating: () });
-        mem::replace(self, Cache { evaluated: thunk() });
+
+        let thunk_cast = Box::from_raw(Box::into_raw(thunk) as *mut FnBox() -> T);
+
+        mem::replace(self, Cache { evaluated: thunk_cast() });
     }
 }
 
 
-impl<'a, T: 'a> AsRef<T> for AtomicThunk<'a, T> {
+impl<T> Borrow<T> for AtomicThunk<T> {
+    #[inline]
+    fn borrow(&self) -> &T {
+        self
+    }
+}
+
+
+impl<T> BorrowMut<T> for AtomicThunk<T> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut T {
+        self
+    }
+}
+
+
+impl<T> AsRef<T> for AtomicThunk<T> {
     #[inline]
     fn as_ref(&self) -> &T {
         self
@@ -104,7 +126,7 @@ impl<'a, T: 'a> AsRef<T> for AtomicThunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> AsMut<T> for AtomicThunk<'a, T> {
+impl<T> AsMut<T> for AtomicThunk<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         self
@@ -112,43 +134,31 @@ impl<'a, T: 'a> AsMut<T> for AtomicThunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> Deref for AtomicThunk<'a, T> {
+impl<T> Deref for AtomicThunk<T> {
     type Target = T;
 
     #[inline]
     fn deref(&self) -> &T {
         self.force();
 
-        unsafe {
-            &self.data
-                .get()
-                .as_ref()
-                .unchecked_unwrap()
-                .evaluated
-        }
+        unsafe { &self.data.get().as_ref().unchecked_unwrap().evaluated }
     }
 }
 
 
-impl<'a, T: 'a> DerefMut for AtomicThunk<'a, T> {
+impl<T> DerefMut for AtomicThunk<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         self.force();
 
-        unsafe {
-            &mut self.data
-                .get()
-                .as_mut()
-                .unchecked_unwrap()
-                .evaluated
-        }
+        unsafe { &mut self.data.get().as_mut().unchecked_unwrap().evaluated }
     }
 }
 
 
-impl<'a, T: 'a> From<T> for AtomicThunk<'a, T> {
+impl<T> From<T> for AtomicThunk<T> {
     #[inline]
-    fn from(t: T) -> AtomicThunk<'a, T> {
+    fn from(t: T) -> Self {
         AtomicThunk {
             lock: Mutex::new(()),
             flag: AtomicUsize::new(THUNK_EVALUATED),
@@ -158,11 +168,13 @@ impl<'a, T: 'a> From<T> for AtomicThunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> AtomicThunk<'a, T> {
+impl<T> AtomicThunk<T> {
     #[inline]
     fn take_data(&mut self) -> Cache<T> {
         self.flag.store(THUNK_INVALIDATED, Ordering::Relaxed);
-        unsafe { mem::replace(&mut self.data, UnsafeCell::new(Cache { evaluating: () })).into_inner() }
+        unsafe {
+            mem::replace(&mut self.data, UnsafeCell::new(Cache { evaluating: () })).into_inner()
+        }
     }
 
 
@@ -191,20 +203,29 @@ impl<'a, T: 'a> AtomicThunk<'a, T> {
                     return;
                 }
 
-                THUNK_DEFERRED | THUNK_INVALIDATED | _ => unreachable(),
+                THUNK_DEFERRED |
+                THUNK_INVALIDATED |
+                _ => unreachable(),
             }
         }
     }
 }
 
 
-impl<'a, T: 'a> LazyRef<'a> for AtomicThunk<'a, T> {
+impl<T> LazyRef for AtomicThunk<T> {
     #[inline]
-    fn defer<F: FnBox() -> T + 'a>(f: F) -> AtomicThunk<'a, T> {
+    fn defer<'a, F: FnBox() -> T + 'a>(f: F) -> AtomicThunk<T>
+        where T: 'a
+    {
+        let thunk = unsafe {
+            let thunk_raw: *mut FnBox() -> T = Box::into_raw(Box::new(f));
+            Box::from_raw(thunk_raw as *mut (FnBox() -> () + 'static))
+        };
+
         AtomicThunk {
             lock: Mutex::new(()),
             flag: AtomicUsize::new(THUNK_DEFERRED),
-            data: UnsafeCell::new(Cache { deferred: Box::new(f) }),
+            data: UnsafeCell::new(Cache { deferred: thunk }),
         }
     }
 
@@ -245,16 +266,17 @@ impl<'a, T: 'a> LazyRef<'a> for AtomicThunk<'a, T> {
 
             /// Only `THUNK_DEFERRED`, `THUNK_EVALUATED`, `THUNK_LOCKING`, and
             /// `THUNK_LOCKED` are valid values of the flag.
-            THUNK_INVALIDATED | _ => unsafe { unreachable() },
+            THUNK_INVALIDATED |
+            _ => unsafe { unreachable() },
         }
     }
 }
 
 
-impl<'a, T: 'a> LazyMut<'a> for AtomicThunk<'a, T> {}
+impl<T> LazyMut for AtomicThunk<T> {}
 
 
-impl<'a, T: 'a> Lazy<'a> for AtomicThunk<'a, T> {
+impl<T> Lazy for AtomicThunk<T> {
     #[inline]
     fn unwrap(mut self) -> T {
         self.force();
@@ -265,14 +287,14 @@ impl<'a, T: 'a> Lazy<'a> for AtomicThunk<'a, T> {
 
 
 /// An `Arc`-wrapped `AtomicThunk` which implements `LazyRef`.
-pub struct ArcThunk<'a, T: 'a>(Arc<AtomicThunk<'a, T>>);
+pub struct ArcThunk<T>(Arc<AtomicThunk<T>>);
 
 
-impl<'a, T: 'a> ArcThunk<'a, T> {
+impl<T> ArcThunk<T> {
     /// If the `ArcThunk` is unevaluated, this will force it. If the `RcThunk` is
     /// the sole, unique owner of the underlying thunk, this will return the forced
     /// value; otherwise, it will return an `Err` containing the original `ArcThunk`.
-    pub fn try_unwrap(this: ArcThunk<'a, T>) -> Result<T, ArcThunk<'a, T>> {
+    pub fn try_unwrap(this: ArcThunk<T>) -> Result<T, ArcThunk<T>> {
         match Arc::try_unwrap(this.0) {
             Ok(thunk) => Ok(thunk.unwrap()),
             Err(rc) => Err(ArcThunk(rc)),
@@ -283,7 +305,7 @@ impl<'a, T: 'a> ArcThunk<'a, T> {
     /// If the `ArcThunk` is unevaluated, this will force it. If the `RcThunk` is
     /// the sole, unique owner of the underlying thunk, this will return a
     /// mutable reference to the forced value; otherwise, it will return `None`.
-    pub fn get_mut<'b>(this: &'b mut ArcThunk<'a, T>) -> Option<&'b mut T> {
+    pub fn get_mut(this: &mut ArcThunk<T>) -> Option<&mut T> {
         Arc::get_mut(&mut this.0).map(DerefMut::deref_mut)
     }
 
@@ -294,14 +316,14 @@ impl<'a, T: 'a> ArcThunk<'a, T> {
     /// the forced value and return a mutable reference to the newly cloned
     /// value. The `&mut ArcThunk` passed in will be updated to reference the
     /// newly cloned value.
-    pub fn make_mut<'b>(this: &'b mut ArcThunk<'a, T>) -> &'b mut T
+    pub fn make_mut(this: &mut ArcThunk<T>) -> &mut T
         where T: Clone
     {
         // No, moving it into a temp doesn't help. We just have to trust the CSE
         // pass here. This is a known borrowchecking issue.
         if Arc::get_mut(&mut this.0).is_some() {
             return &mut **Arc::get_mut(&mut this.0)
-                .expect("We know it's `some` - this won't change.");
+                              .expect("We know it's `some` - this won't change.");
         }
 
         let new_rc = Arc::new(AtomicThunk::computed((*this.0).clone()));
@@ -311,21 +333,21 @@ impl<'a, T: 'a> ArcThunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> Clone for ArcThunk<'a, T> {
-    fn clone(&self) -> ArcThunk<'a, T> {
+impl<T> Clone for ArcThunk<T> {
+    fn clone(&self) -> Self {
         ArcThunk(self.0.clone())
     }
 }
 
 
-impl<'a, T: 'a> AsRef<T> for ArcThunk<'a, T> {
+impl<T> AsRef<T> for ArcThunk<T> {
     fn as_ref(&self) -> &T {
         &self.0
     }
 }
 
 
-impl<'a, T: 'a> Deref for ArcThunk<'a, T> {
+impl<T> Deref for ArcThunk<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -334,16 +356,16 @@ impl<'a, T: 'a> Deref for ArcThunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> From<T> for ArcThunk<'a, T> {
-    fn from(t: T) -> ArcThunk<'a, T> {
+impl<T> From<T> for ArcThunk<T> {
+    fn from(t: T) -> ArcThunk<T> {
         ArcThunk(Arc::new(AtomicThunk::computed(t)))
     }
 }
 
 
-impl<'a, T: 'a> LazyRef<'a> for ArcThunk<'a, T> {
+impl<T> LazyRef for ArcThunk<T> {
     #[inline]
-    fn defer<F: FnOnce() -> T + 'a>(f: F) -> ArcThunk<'a, T> {
+    fn defer<'a, F: FnOnce() -> T + 'a>(f: F) -> ArcThunk<T> {
         ArcThunk(Arc::new(AtomicThunk::defer(f)))
     }
 
@@ -375,14 +397,16 @@ mod test {
         assert_eq!(*thunk, 2);
     }
 
-    fn ten_thousand_xors_strict<'a>(n: usize) -> AtomicThunk<'a, usize> {
-        AtomicThunk::computed((0..test::black_box(10000)).fold(test::black_box(n), |old, new| old ^ new))
+    fn ten_thousand_xors_strict(n: usize) -> AtomicThunk<usize> {
+        AtomicThunk::computed((0..test::black_box(10000))
+                                  .fold(test::black_box(n), |old, new| old ^ new))
     }
 
-    fn ten_thousand_xors_lazy<'a>(n: usize) -> AtomicThunk<'a, usize> {
+    fn ten_thousand_xors_lazy(n: usize) -> AtomicThunk<usize> {
         AtomicThunk::defer(move || {
-                         (0..test::black_box(10000)).fold(test::black_box(n), |old, new| old ^ new)
-                     })
+                               (0..test::black_box(10000))
+                                   .fold(test::black_box(n), |old, new| old ^ new)
+                           })
     }
 
     #[bench]
@@ -396,9 +420,9 @@ mod test {
     #[bench]
     fn ten_thousand_xors_threadsafe_lazy(b: &mut Bencher) {
         b.iter(|| {
-            let mut things: Vec<_> = (0..1000).map(ten_thousand_xors_lazy).collect();
-            test::black_box(things.pop())
-        })
+                   let mut things: Vec<_> = (0..1000).map(ten_thousand_xors_lazy).collect();
+                   test::black_box(things.pop())
+               })
     }
 
 

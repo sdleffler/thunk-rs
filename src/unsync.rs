@@ -1,3 +1,4 @@
+use std::borrow::{Borrow, BorrowMut};
 use std::boxed::FnBox;
 use std::cell::{Cell, UnsafeCell};
 use std::mem;
@@ -10,7 +11,7 @@ use {LazyRef, LazyMut, Lazy};
 
 
 /// A non-thread-safe `Thunk`, representing a lazily computed value.
-pub struct Thunk<'a, T: 'a> {
+pub struct Thunk<T> {
     /// The `Flag` value is used to represent the state of the thunk. Ordinarily
     /// it would be idiomatic Rust to simply store the `Cache` value as an enum,
     /// and carry this `Flag` data as part of the enum discriminant; however,
@@ -20,7 +21,7 @@ pub struct Thunk<'a, T: 'a> {
 
     /// Interior mutability is used here so that the fact that dereferencing a
     /// `Thunk` may cause a mutation is abstracted away.
-    data: UnsafeCell<Cache<'a, T>>,
+    data: UnsafeCell<Cache<T>>,
 }
 
 
@@ -33,8 +34,8 @@ enum Flag {
 
 
 #[allow(unions_with_drop_fields)]
-union Cache<'a, T: 'a> {
-    deferred: Box<FnBox() -> T + 'a>,
+union Cache<T> {
+    deferred: Box<FnBox() -> ()>,
     evaluated: T,
 
     #[allow(dead_code)]
@@ -42,7 +43,7 @@ union Cache<'a, T: 'a> {
 }
 
 
-impl<'a, T: 'a> Drop for Thunk<'a, T> {
+impl<T> Drop for Thunk<T> {
     fn drop(&mut self) {
         match self.flag.get() {
             Flag::Deferred => mem::drop(unsafe { self.take_data().deferred }),
@@ -53,7 +54,7 @@ impl<'a, T: 'a> Drop for Thunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> Cache<'a, T> {
+impl<T> Cache<T> {
     /// PRECONDITION: `Cache` must be `Deferred`! UB results otherwise.
     ///
     /// Evaluate the thunk and replace the `Cache` with an `Evaluated` value
@@ -61,12 +62,31 @@ impl<'a, T: 'a> Cache<'a, T> {
     #[inline]
     unsafe fn evaluate_thunk(&mut self) {
         let Cache { deferred: thunk } = mem::replace(self, Cache { evaluating: () });
-        mem::replace(self, Cache { evaluated: thunk() });
+
+        let thunk_cast = Box::from_raw(Box::into_raw(thunk) as *mut FnBox() -> T);
+
+        mem::replace(self, Cache { evaluated: thunk_cast() });
     }
 }
 
 
-impl<'a, T: 'a> AsRef<T> for Thunk<'a, T> {
+impl<T> Borrow<T> for Thunk<T> {
+    #[inline]
+    fn borrow(&self) -> &T {
+        self
+    }
+}
+
+
+impl<T> BorrowMut<T> for Thunk<T> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut T {
+        self
+    }
+}
+
+
+impl<T> AsRef<T> for Thunk<T> {
     #[inline]
     fn as_ref(&self) -> &T {
         self
@@ -74,7 +94,7 @@ impl<'a, T: 'a> AsRef<T> for Thunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> AsMut<T> for Thunk<'a, T> {
+impl<T> AsMut<T> for Thunk<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         self
@@ -82,7 +102,7 @@ impl<'a, T: 'a> AsMut<T> for Thunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> Deref for Thunk<'a, T> {
+impl<T> Deref for Thunk<T> {
     type Target = T;
 
     #[inline]
@@ -94,7 +114,7 @@ impl<'a, T: 'a> Deref for Thunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> DerefMut for Thunk<'a, T> {
+impl<T> DerefMut for Thunk<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         self.force();
@@ -104,9 +124,9 @@ impl<'a, T: 'a> DerefMut for Thunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> From<T> for Thunk<'a, T> {
+impl<T> From<T> for Thunk<T> {
     #[inline]
-    fn from(t: T) -> Thunk<'a, T> {
+    fn from(t: T) -> Thunk<T> {
         Thunk {
             flag: Cell::new(Flag::Evaluated),
             data: UnsafeCell::new(Cache { evaluated: t }),
@@ -115,9 +135,9 @@ impl<'a, T: 'a> From<T> for Thunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> Thunk<'a, T> {
+impl<T> Thunk<T> {
     #[inline]
-    fn take_data(&mut self) -> Cache<'a, T> {
+    fn take_data(&mut self) -> Cache<T> {
         self.flag.set(Flag::Empty);
         unsafe {
             mem::replace(&mut self.data, UnsafeCell::new(Cache { evaluating: () })).into_inner()
@@ -126,12 +146,21 @@ impl<'a, T: 'a> Thunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> LazyRef<'a> for Thunk<'a, T> {
+impl<T> LazyRef for Thunk<T> {
     #[inline]
-    fn defer<F: FnBox() -> T + 'a>(f: F) -> Thunk<'a, T> {
+    fn defer<'a, F: FnBox() -> T + 'a>(f: F) -> Thunk<T>
+        where T: 'a
+    {
+        let thunk = {
+            unsafe {
+                let thunk_raw: *mut FnBox() -> T = Box::into_raw(Box::new(f));
+                Box::from_raw(thunk_raw as *mut (FnBox() -> () + 'static))
+            }
+        };
+
         Thunk {
             flag: Cell::new(Flag::Deferred),
-            data: UnsafeCell::new(Cache { deferred: Box::new(f) }),
+            data: UnsafeCell::new(Cache { deferred: thunk }),
         }
     }
 
@@ -153,10 +182,10 @@ impl<'a, T: 'a> LazyRef<'a> for Thunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> LazyMut<'a> for Thunk<'a, T> {}
+impl<T> LazyMut for Thunk<T> {}
 
 
-impl<'a, T: 'a> Lazy<'a> for Thunk<'a, T> {
+impl<T> Lazy for Thunk<T> {
     #[inline]
     fn unwrap(mut self) -> T {
         self.force();
@@ -167,14 +196,14 @@ impl<'a, T: 'a> Lazy<'a> for Thunk<'a, T> {
 
 
 /// An `Rc`-wrapped `Thunk` which implements `LazyRef`.
-pub struct RcThunk<'a, T: 'a>(Rc<Thunk<'a, T>>);
+pub struct RcThunk<T>(Rc<Thunk<T>>);
 
 
-impl<'a, T: 'a> RcThunk<'a, T> {
+impl<T> RcThunk<T> {
     /// If the `RcThunk` is unevaluated, this will force it. If the `RcThunk` is
     /// the sole, unique owner of the underlying thunk, this will return the forced
     /// value; otherwise, it will return an `Err` containing the original `RcThunk`.
-    pub fn try_unwrap(this: RcThunk<'a, T>) -> Result<T, RcThunk<'a, T>> {
+    pub fn try_unwrap(this: RcThunk<T>) -> Result<T, RcThunk<T>> {
         match Rc::try_unwrap(this.0) {
             Ok(thunk) => Ok(thunk.unwrap()),
             Err(rc) => Err(RcThunk(rc)),
@@ -185,7 +214,7 @@ impl<'a, T: 'a> RcThunk<'a, T> {
     /// If the `RcThunk` is unevaluated, this will force it. If the `RcThunk` is
     /// the sole, unique owner of the underlying thunk, this will return a
     /// mutable reference to the forced value; otherwise, it will return `None`.
-    pub fn get_mut<'b>(this: &'b mut RcThunk<'a, T>) -> Option<&'b mut T> {
+    pub fn get_mut(this: &mut RcThunk<T>) -> Option<&mut T> {
         Rc::get_mut(&mut this.0).map(DerefMut::deref_mut)
     }
 
@@ -196,14 +225,14 @@ impl<'a, T: 'a> RcThunk<'a, T> {
     /// the forced value and return a mutable reference to the newly cloned
     /// value. The `&mut RcThunk` passed in will be updated to reference the
     /// newly cloned value.
-    pub fn make_mut<'b>(this: &'b mut RcThunk<'a, T>) -> &'b mut T
+    pub fn make_mut(this: &mut RcThunk<T>) -> &mut T
         where T: Clone
     {
         // No, moving it into a temp doesn't help. We just have to trust the CSE
         // pass here. This is a known borrowchecking issue.
         if Rc::get_mut(&mut this.0).is_some() {
             return &mut **Rc::get_mut(&mut this.0)
-                .expect("We know it's `some` - this won't change.");
+                              .expect("We know it's `some` - this won't change.");
         }
 
         let new_rc = Rc::new(Thunk::computed((*this.0).clone()));
@@ -213,21 +242,21 @@ impl<'a, T: 'a> RcThunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> Clone for RcThunk<'a, T> {
-    fn clone(&self) -> RcThunk<'a, T> {
+impl<T> Clone for RcThunk<T> {
+    fn clone(&self) -> RcThunk<T> {
         RcThunk(self.0.clone())
     }
 }
 
 
-impl<'a, T: 'a> AsRef<T> for RcThunk<'a, T> {
+impl<T> AsRef<T> for RcThunk<T> {
     fn as_ref(&self) -> &T {
         &self.0
     }
 }
 
 
-impl<'a, T: 'a> Deref for RcThunk<'a, T> {
+impl<T> Deref for RcThunk<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -236,16 +265,16 @@ impl<'a, T: 'a> Deref for RcThunk<'a, T> {
 }
 
 
-impl<'a, T: 'a> From<T> for RcThunk<'a, T> {
-    fn from(t: T) -> RcThunk<'a, T> {
+impl<T> From<T> for RcThunk<T> {
+    fn from(t: T) -> RcThunk<T> {
         RcThunk(Rc::new(Thunk::computed(t)))
     }
 }
 
 
-impl<'a, T: 'a> LazyRef<'a> for RcThunk<'a, T> {
+impl<T> LazyRef for RcThunk<T> {
     #[inline]
-    fn defer<F: FnOnce() -> T + 'a>(f: F) -> RcThunk<'a, T> {
+    fn defer<'a, F: FnOnce() -> T + 'a>(f: F) -> RcThunk<T> where T: 'a {
         RcThunk(Rc::new(Thunk::defer(f)))
     }
 
@@ -277,11 +306,11 @@ mod test {
         assert_eq!(*thunk, 2);
     }
 
-    fn ten_thousand_xors_strict<'a>(n: usize) -> Thunk<'a, usize> {
+    fn ten_thousand_xors_strict(n: usize) -> Thunk<usize> {
         Thunk::computed((0..test::black_box(10000)).fold(test::black_box(n), |old, new| old ^ new))
     }
 
-    fn ten_thousand_xors_lazy<'a>(n: usize) -> Thunk<'a, usize> {
+    fn ten_thousand_xors_lazy(n: usize) -> Thunk<usize> {
         Thunk::defer(move || {
                          (0..test::black_box(10000)).fold(test::black_box(n), |old, new| old ^ new)
                      })
