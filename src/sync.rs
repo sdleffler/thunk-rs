@@ -1,5 +1,4 @@
 use std::borrow::{Borrow, BorrowMut};
-use std::boxed::FnBox;
 use std::cell::UnsafeCell;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -63,7 +62,7 @@ const THUNK_INVALIDATED: usize = 4;
 /// result.
 #[allow(unions_with_drop_fields)]
 union Cache<T> {
-    deferred: Box<dyn FnBox() -> ()>,
+    deferred: Box<dyn FnOnce() -> ()>,
     evaluated: T,
 
     #[allow(dead_code)]
@@ -95,7 +94,7 @@ impl<T> Cache<T> {
     unsafe fn evaluate_thunk(&mut self) {
         let Cache { deferred: thunk } = mem::replace(self, Cache { evaluating: () });
 
-        let thunk_cast = Box::from_raw(Box::into_raw(thunk) as *mut dyn FnBox() -> T);
+        let thunk_cast = Box::from_raw(Box::into_raw(thunk) as *mut dyn FnOnce() -> T);
 
         mem::replace(self, Cache { evaluated: thunk_cast() });
     }
@@ -212,12 +211,12 @@ impl<T> AtomicThunk<T> {
 
 impl<T> LazyRef for AtomicThunk<T> {
     #[inline]
-    fn defer<'a, F: FnBox() -> T + 'a>(f: F) -> AtomicThunk<T>
+    fn defer<'a, F: FnOnce() -> T + 'a>(f: F) -> AtomicThunk<T>
         where T: 'a
     {
         let thunk = unsafe {
-            let thunk_raw: *mut dyn FnBox() -> T = Box::into_raw(Box::new(f));
-            Box::from_raw(thunk_raw as *mut (dyn FnBox() -> () + 'static))
+            let thunk_raw: *mut dyn FnOnce() -> T = Box::into_raw(Box::new(f));
+            Box::from_raw(thunk_raw as *mut (dyn FnOnce() -> () + 'static))
         };
 
         AtomicThunk {
