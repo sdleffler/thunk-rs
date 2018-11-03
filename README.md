@@ -2,7 +2,8 @@
 [![Docs Status](https://docs.rs/thunk/badge.svg)](https://docs.rs/thunk)
 [![On crates.io](https://img.shields.io/crates/v/thunk.svg)](https://crates.io/crates/thunk)
 
-N.B. this crate requires nightly, as it makes use of `FnBox` and untagged unions.
+N.B. this crate requires nightly, as it makes use of `Box<FnOnce>`
+(`unsized_locals`) and `untagged_unions`.
 
 # `thunk`: Generic lazy evaluation for Rust
 
