@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use unreachable::{unreachable, UncheckedOptionExt};
 
-use {LazyRef, LazyMut, Lazy};
+use crate::{LazyRef, LazyMut, Lazy};
 
 
 /// A thread-safe `AtomicThunk`, representing a lazily computed value.
@@ -63,7 +63,7 @@ const THUNK_INVALIDATED: usize = 4;
 /// result.
 #[allow(unions_with_drop_fields)]
 union Cache<T> {
-    deferred: Box<FnBox() -> ()>,
+    deferred: Box<dyn FnBox() -> ()>,
     evaluated: T,
 
     #[allow(dead_code)]
@@ -95,7 +95,7 @@ impl<T> Cache<T> {
     unsafe fn evaluate_thunk(&mut self) {
         let Cache { deferred: thunk } = mem::replace(self, Cache { evaluating: () });
 
-        let thunk_cast = Box::from_raw(Box::into_raw(thunk) as *mut FnBox() -> T);
+        let thunk_cast = Box::from_raw(Box::into_raw(thunk) as *mut dyn FnBox() -> T);
 
         mem::replace(self, Cache { evaluated: thunk_cast() });
     }
@@ -216,8 +216,8 @@ impl<T> LazyRef for AtomicThunk<T> {
         where T: 'a
     {
         let thunk = unsafe {
-            let thunk_raw: *mut FnBox() -> T = Box::into_raw(Box::new(f));
-            Box::from_raw(thunk_raw as *mut (FnBox() -> () + 'static))
+            let thunk_raw: *mut dyn FnBox() -> T = Box::into_raw(Box::new(f));
+            Box::from_raw(thunk_raw as *mut (dyn FnBox() -> () + 'static))
         };
 
         AtomicThunk {
