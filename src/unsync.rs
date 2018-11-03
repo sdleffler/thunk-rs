@@ -139,9 +139,7 @@ impl<T> Thunk<T> {
     #[inline]
     fn take_data(&mut self) -> Cache<T> {
         self.flag.set(Flag::Empty);
-        unsafe {
-            mem::replace(&mut self.data, UnsafeCell::new(Cache { evaluating: () })).into_inner()
-        }
+        mem::replace(&mut self.data, UnsafeCell::new(Cache { evaluating: () })).into_inner()
     }
 }
 

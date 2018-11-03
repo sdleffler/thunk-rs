@@ -172,9 +172,7 @@ impl<T> AtomicThunk<T> {
     #[inline]
     fn take_data(&mut self) -> Cache<T> {
         self.flag.store(THUNK_INVALIDATED, Ordering::Relaxed);
-        unsafe {
-            mem::replace(&mut self.data, UnsafeCell::new(Cache { evaluating: () })).into_inner()
-        }
+        mem::replace(&mut self.data, UnsafeCell::new(Cache { evaluating: () })).into_inner()
     }
 
 
@@ -257,15 +255,15 @@ impl<T> LazyRef for AtomicThunk<T> {
                 }
             }
 
-            /// If the `AtomicThunk` is evaluated, do nothing.
+            // If the `AtomicThunk` is evaluated, do nothing.
             THUNK_EVALUATED => {}
 
-            /// If the `AtomicThunk` is `LOCKING` or `LOCKED`, wait until the thunk is
-            /// done evaluating and then return a reference to the inner value.
+            // If the `AtomicThunk` is `LOCKING` or `LOCKED`, wait until the thunk is
+            // done evaluating and then return a reference to the inner value.
             THUNK_LOCKING | THUNK_LOCKED => unsafe { self.besiege() },
 
-            /// Only `THUNK_DEFERRED`, `THUNK_EVALUATED`, `THUNK_LOCKING`, and
-            /// `THUNK_LOCKED` are valid values of the flag.
+            // Only `THUNK_DEFERRED`, `THUNK_EVALUATED`, `THUNK_LOCKING`, and
+            // `THUNK_LOCKED` are valid values of the flag.
             THUNK_INVALIDATED |
             _ => unsafe { unreachable() },
         }
