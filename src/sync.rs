@@ -1,5 +1,4 @@
 use std::borrow::{Borrow, BorrowMut};
-use std::boxed::FnBox;
 use std::cell::UnsafeCell;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -9,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use unreachable::{unreachable, UncheckedOptionExt};
 
-use {LazyRef, LazyMut, Lazy};
+use crate::{LazyRef, LazyMut, Lazy};
 
 
 /// A thread-safe `AtomicThunk`, representing a lazily computed value.
@@ -63,7 +62,7 @@ const THUNK_INVALIDATED: usize = 4;
 /// result.
 #[allow(unions_with_drop_fields)]
 union Cache<T> {
-    deferred: Box<FnBox() -> ()>,
+    deferred: Box<dyn FnOnce() -> ()>,
     evaluated: T,
 
     #[allow(dead_code)]
@@ -95,7 +94,7 @@ impl<T> Cache<T> {
     unsafe fn evaluate_thunk(&mut self) {
         let Cache { deferred: thunk } = mem::replace(self, Cache { evaluating: () });
 
-        let thunk_cast = Box::from_raw(Box::into_raw(thunk) as *mut FnBox() -> T);
+        let thunk_cast = Box::from_raw(Box::into_raw(thunk) as *mut dyn FnOnce() -> T);
 
         mem::replace(self, Cache { evaluated: thunk_cast() });
     }
@@ -172,9 +171,7 @@ impl<T> AtomicThunk<T> {
     #[inline]
     fn take_data(&mut self) -> Cache<T> {
         self.flag.store(THUNK_INVALIDATED, Ordering::Relaxed);
-        unsafe {
-            mem::replace(&mut self.data, UnsafeCell::new(Cache { evaluating: () })).into_inner()
-        }
+        mem::replace(&mut self.data, UnsafeCell::new(Cache { evaluating: () })).into_inner()
     }
 
 
@@ -214,12 +211,12 @@ impl<T> AtomicThunk<T> {
 
 impl<T> LazyRef for AtomicThunk<T> {
     #[inline]
-    fn defer<'a, F: FnBox() -> T + 'a>(f: F) -> AtomicThunk<T>
+    fn defer<'a, F: FnOnce() -> T + 'a>(f: F) -> AtomicThunk<T>
         where T: 'a
     {
         let thunk = unsafe {
-            let thunk_raw: *mut FnBox() -> T = Box::into_raw(Box::new(f));
-            Box::from_raw(thunk_raw as *mut (FnBox() -> () + 'static))
+            let thunk_raw: *mut dyn FnOnce() -> T = Box::into_raw(Box::new(f));
+            Box::from_raw(thunk_raw as *mut (dyn FnOnce() -> () + 'static))
         };
 
         AtomicThunk {
@@ -257,15 +254,15 @@ impl<T> LazyRef for AtomicThunk<T> {
                 }
             }
 
-            /// If the `AtomicThunk` is evaluated, do nothing.
+            // If the `AtomicThunk` is evaluated, do nothing.
             THUNK_EVALUATED => {}
 
-            /// If the `AtomicThunk` is `LOCKING` or `LOCKED`, wait until the thunk is
-            /// done evaluating and then return a reference to the inner value.
+            // If the `AtomicThunk` is `LOCKING` or `LOCKED`, wait until the thunk is
+            // done evaluating and then return a reference to the inner value.
             THUNK_LOCKING | THUNK_LOCKED => unsafe { self.besiege() },
 
-            /// Only `THUNK_DEFERRED`, `THUNK_EVALUATED`, `THUNK_LOCKING`, and
-            /// `THUNK_LOCKED` are valid values of the flag.
+            // Only `THUNK_DEFERRED`, `THUNK_EVALUATED`, `THUNK_LOCKING`, and
+            // `THUNK_LOCKED` are valid values of the flag.
             THUNK_INVALIDATED |
             _ => unsafe { unreachable() },
         }

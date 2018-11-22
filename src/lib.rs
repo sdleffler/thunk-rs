@@ -17,7 +17,7 @@
 //!   over `AtomicThunk`.
 
 #![cfg_attr(test, feature(test))]
-#![feature(fnbox)]
+#![feature(unsized_locals)]
 #![feature(untagged_unions)]
 
 extern crate unreachable;
@@ -32,9 +32,9 @@ pub mod sync;
 pub mod unsync;
 
 
-pub use strict::Strict;
-pub use sync::{AtomicThunk, ArcThunk};
-pub use unsync::{Thunk, RcThunk};
+pub use crate::strict::Strict;
+pub use crate::sync::{AtomicThunk, ArcThunk};
+pub use crate::unsync::{Thunk, RcThunk};
 
 
 /// The `Lazy` trait abstracts thunks which have exactly the same lifetimes
@@ -53,7 +53,7 @@ pub trait LazyRef
     /// Defer a computation stored as a `FnOnce` closure. Unwrapping/dereferencing
     /// will force the computation of the closure. The supplied closure must live
     /// as long as the type which the thunk computes.
-    fn defer<'a, F: FnOnce() -> Self::Target + 'a>(F) -> Self where Self::Target: 'a;
+    fn defer<'a, F: FnOnce() -> Self::Target + 'a>(closure: F) -> Self where Self::Target: 'a;
 
     /// Manually force a thunk's computation.
     fn force(&self);

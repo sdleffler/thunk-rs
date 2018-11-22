@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use ::{LazyRef, LazyMut, Lazy};
+use crate::{LazyRef, LazyMut, Lazy};
 
 
 /// A do-nothing, strict "thunk". This is intended for implementing structures which
